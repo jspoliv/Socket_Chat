@@ -57,7 +57,7 @@ int main() {
     }
     printf("[socket() resolved successfully]\n");
 
-    SOCKADDR_IN *address = createIPv4Address("127.0.0.1", 2000);
+    SOCKADDR_IN *address = createIPv4Address("127.0.0.1", 3000);
     if (address == NULL) {
         printf("[createIPv4Address() failed]\n\n");
         closesocket(socketFD);
@@ -87,7 +87,7 @@ int main() {
     char buffer[1024];
     char message[1000];
     while (1) {
-        printf("\nType a message to send:\n\n");
+        //printf("\nType a message to send:\n\n");
         fgets(message, sizeof(message), stdin);
         int msg_len = strlen(message);
 

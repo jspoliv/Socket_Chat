@@ -119,7 +119,7 @@ int main() {
     printf("[socket() resolved successfully]\n");
 
 
-    SOCKADDR_IN* serverAddress = createIPv4Address("", 2000);
+    SOCKADDR_IN* serverAddress = createIPv4Address("", 3000);
     if(serverAddress == NULL) {
         printf("[createIPv4Address() failed]\n\n");
         closesocket(serverSocketFD);
