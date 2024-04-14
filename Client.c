@@ -3,30 +3,12 @@
 #include <winsock2.h>
 #include <pthread.h>
 
-// IPv4 TCP socket
-SOCKET newSocket();
-
 // IPv4 address
 SOCKADDR_IN newAddress(char *ip, int port);
 
-void* sendLoop(SOCKET* socket);
+void* sendLoop(void* socket);
 
-void* recvLoop(void* socketFD) {
-    SOCKET* socket = (SOCKET*)socketFD;
-    char buffer[1024];
-    while(1) {
-        ssize_t recvSize = recv(*socket, buffer, sizeof(buffer), 0);
-        if(recvSize > 0) {
-            buffer[recvSize] = '\0';
-            printf("[%s]\n\n", buffer);
-            //if(strstr(buffer, "exit()") != NULL)
-            //    break;
-        }
-        else {
-            break;
-        }
-    }
-}
+void* recvLoop(void* socket);
 
 int main() {
     WSADATA WSAData;
@@ -41,7 +23,7 @@ int main() {
     }
     printf("[WSAStartup() resolved successfully]\n");
 
-    client_socket = newSocket();
+    client_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (client_socket == INVALID_SOCKET) {
         printf("[socket() failed]\n\n");
         WSACleanup();
@@ -72,10 +54,6 @@ int main() {
     return 0;
 }
 
-SOCKET newSocket() {
-    return socket(AF_INET, SOCK_STREAM, 0);
-}
-
 SOCKADDR_IN newAddress(char *ip, int port) {
     SOCKADDR_IN addr_in;
     addr_in.sin_family = AF_INET;
@@ -84,32 +62,46 @@ SOCKADDR_IN newAddress(char *ip, int port) {
     return addr_in;
 }
 
-
-void* sendLoop(SOCKET* socket) {
-    SOCKET client_socket = *socket;
-    char client_name[22];
+void* sendLoop(void* socket) {
+    SOCKET client_socket = *(SOCKET*)socket;
+    char username[22], message[1000], buffer[1024];
+    int msg_len;
+    
     printf("\nType an alias for this client: ");
-    fgets(client_name, sizeof(client_name), stdin);
-    client_name[strlen(client_name) - 1] = '\0';
-    char buffer[1024];
-    char message[1000];
+    fgets(username, sizeof(username), stdin);
+    username[strlen(username) - 1] = '\0';
     while (1) {
         //printf("\nType a message to send:\n\n");
         fgets(message, sizeof(message), stdin);
-        int msg_len = strlen(message);
+        msg_len = strlen(message);
 
-        if (msg_len == 1)
-            continue;
-        else
-        {
+        if (msg_len > 1) {
             message[msg_len - 1] = '\0';
-            snprintf(buffer, sizeof(buffer), "%s: %s", client_name, message);
+            snprintf(buffer, sizeof(buffer), "%s: %s", username, message);
             msg_len = strlen(buffer);
+            if (send(client_socket, buffer, msg_len, 0) == SOCKET_ERROR || strstr(message, "exit()") != NULL)
+                break;
         }
-        int result_send = send(client_socket, buffer, msg_len, 0);
-        if (result_send == SOCKET_ERROR || strstr(message, "exit()") != NULL)
-            break;
     }
     return NULL;
 }
 
+void* recvLoop(void* socket) {
+    SOCKET s = *(SOCKET*)socket;
+    char buffer[1024];
+    int recvSize;
+    while(1) {
+        recvSize = recv(s, buffer, sizeof(buffer), 0);
+        if(recvSize > 0) {
+            buffer[recvSize] = '\0';
+            printf("[%s]\n\n", buffer);
+            //if(strstr(buffer, "exit()") != NULL)
+            //    break;
+        }
+        else {
+            printf("[recv() failed]\n\n");
+            break;
+        }
+    }
+    return NULL;
+}
