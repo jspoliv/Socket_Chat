@@ -6,6 +6,7 @@
 #define SERVER_BACKLOG 10
 #define BUFFER_SIZE 1024
 
+
 typedef struct ClientAddrFD {
     SOCKET socketFD;
 } clientAddrFD;
@@ -17,6 +18,15 @@ typedef struct ClientGroup {
     int exit;
 } clientGroup;
 
+typedef struct Server {
+    SOCKET client_socket, socket_list[SERVER_BACKLOG];
+    int list_size, exit;
+} server;
+
+SOCKADDR_IN newAddress(char* ip, int port);
+void acceptLoop(SOCKET serverSocketFD);
+
+// clientAccept accept(serverSocketFD, NULL, NULL);
 clientAddrFD* clientAccept(SOCKET serverSocketFD) {
     clientAddrFD* client = malloc(sizeof(clientAddrFD));
     if(client == NULL)
@@ -26,14 +36,22 @@ clientAddrFD* clientAccept(SOCKET serverSocketFD) {
     return client;
 }
 
-SOCKADDR_IN newAddress(char* ip, int port) {
-    SOCKADDR_IN addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = (ip == NULL || strlen(ip) == 0) ? INADDR_ANY : inet_addr(ip) ;
-    return addr;
-}
 
+int resend2(char* buffer, SOCKET sender_socket, server* s) {
+    for(int i=0; i < s->list_size; i++) {
+        if(s->socket_list[i] > 0 && sender_socket != s->socket_list[i]) {
+            if(send(s->socket_list[i], buffer, BUFFER_SIZE, 0) == SOCKET_ERROR) {
+                closesocket(s->socket_list[i]);
+                if(s->client_socket == s->socket_list[i])
+                    s->client_socket = 0;
+                s->socket_list[i] = 0;
+            }
+            else
+                printf("Resent to member[%d] socket: %d\n", i, s->socket_list[i]);
+        }
+    }
+    return 0;
+}
 
 int resend(char *buffer, SOCKET sender_socket, clientGroup *group) {
     for(int i=0; i<group->size; i++) {
@@ -90,6 +108,7 @@ void recvPrintThread(clientGroup *group) {
 }
 
 
+
 int main() {
     WSADATA WSAData;
     SOCKET serverSocketFD;
@@ -127,6 +146,25 @@ int main() {
     }
     printf("[listen() resolved successfully]\n");
 
+    acceptLoop(serverSocketFD);
+
+    shutdown(serverSocketFD, SD_BOTH);
+    closesocket(serverSocketFD);
+    WSACleanup();
+    printf("\n\n");
+    system("pause");
+    return 0;
+}
+
+SOCKADDR_IN newAddress(char* ip, int port) {
+    SOCKADDR_IN addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = (ip == NULL || strlen(ip) == 0) ? INADDR_ANY : inet_addr(ip) ;
+    return addr;
+}
+
+void acceptLoop(SOCKET serverSocketFD) {
     clientGroup group;
     group.size = 0;
     group.exit = 0;
@@ -144,12 +182,4 @@ int main() {
             }
         }
     }
-
-
-    shutdown(serverSocketFD, SD_BOTH);
-    closesocket(serverSocketFD);
-    WSACleanup();
-    printf("\n\n");
-    system("pause");
-    return 0;
 }
