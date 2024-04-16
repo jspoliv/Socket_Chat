@@ -79,7 +79,7 @@ void* sendLoop(void* socket) {
             message[msg_len - 1] = '\0';
             snprintf(buffer, sizeof(buffer), "%s: %s", username, message);
             msg_len = strlen(buffer);
-            if (send(client_socket, buffer, msg_len, 0) == SOCKET_ERROR || strstr(message, "exit()") != NULL)
+            if (send(client_socket, buffer, msg_len, 0) == SOCKET_ERROR || strstr(message, "exit()") != NULL || strstr(message, "shutdown()") != NULL)
                 break;
         }
     }
@@ -95,8 +95,11 @@ void* recvLoop(void* socket) {
         if(recvSize > 0) {
             buffer[recvSize] = '\0';
             printf("[%s]\n\n", buffer);
-            //if(strstr(buffer, "exit()") != NULL)
-            //    break;
+            if(strstr(buffer, "shutdown()") != NULL) {
+                closesocket(s);
+                WSACleanup();
+                exit(0);
+            }
         }
         else {
             printf("[recv() failed]\n\n");
