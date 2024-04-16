@@ -3,121 +3,43 @@
 #include <winsock2.h>
 #include <pthread.h>
 
-#define SERVER_BACKLOG 10
-#define BUFFER_SIZE 1024
-
-
-typedef struct ClientAddrFD {
-    SOCKET socketFD;
-} clientAddrFD;
-
-typedef struct ClientGroup {
-    clientAddrFD* members[SERVER_BACKLOG];
-    clientAddrFD* client;
-    int size;
-    int exit;
-} clientGroup;
+#define BACKLOG 10
+#define BUFSIZE 1024
 
 typedef struct Server {
-    SOCKET client_socket, socket_list[SERVER_BACKLOG];
-    int list_size, exit;
+    int prev, client, exit;
+    SOCKET serverSocket;
+    SOCKET sockets[BACKLOG];
+    pthread_t th[BACKLOG];
+    pthread_mutex_t lock;
 } server;
 
+// Returns an AF_INET SOCKARR_IN at ip:port
 SOCKADDR_IN newAddress(char* ip, int port);
-void acceptLoop(SOCKET serverSocketFD);
 
-// clientAccept accept(serverSocketFD, NULL, NULL);
-clientAddrFD* clientAccept(SOCKET serverSocketFD) {
-    clientAddrFD* client = malloc(sizeof(clientAddrFD));
-    if(client == NULL)
-        return NULL;
+// Returns a server with starting values
+server newServer(SOCKET serverSocket, int size);
 
-    client->socketFD = accept(serverSocketFD, NULL, NULL);
-    return client;
-}
+// Returns the position of the first available socket on the list of length size
+int notFull(SOCKET* list, int size);
 
+void acceptLoop(SOCKET serverSocket);
 
-int resend2(char* buffer, SOCKET sender_socket, server* s) {
-    for(int i=0; i < s->list_size; i++) {
-        if(s->socket_list[i] > 0 && sender_socket != s->socket_list[i]) {
-            if(send(s->socket_list[i], buffer, BUFFER_SIZE, 0) == SOCKET_ERROR) {
-                closesocket(s->socket_list[i]);
-                if(s->client_socket == s->socket_list[i])
-                    s->client_socket = 0;
-                s->socket_list[i] = 0;
-            }
-            else
-                printf("Resent to member[%d] socket: %d\n", i, s->socket_list[i]);
-        }
-    }
-    return 0;
-}
+void* recvLoop(void* pServer);
 
-int resend(char *buffer, SOCKET sender_socket, clientGroup *group) {
-    for(int i=0; i<group->size; i++) {
-        if(group->members[i]->socketFD > 0 && sender_socket != group->members[i]->socketFD) {
-            if(send(group->members[i]->socketFD, buffer, BUFFER_SIZE, 0) == SOCKET_ERROR) {
-                closesocket(group->members[i]->socketFD);
-                if(group->client->socketFD == group->members[i]->socketFD)
-                    group->client->socketFD = 0;
-                group->members[i]->socketFD = 0;
-            }
-            else
-                printf("Resent to member[%d] socket: %d\n", i, group->members[i]->socketFD);
-        }
-    }
-    return 0;
-}
-
-
-void* recvPrint(void* clGroup) {
-    clientGroup* group = (clientGroup*)clGroup;
-    char buffer[BUFFER_SIZE];
-    SOCKET socketFD = group->client->socketFD;
-    while(1) {
-        int recvSize = recv(socketFD, buffer, BUFFER_SIZE, 0);
-        if(recvSize > 0) {
-            buffer[recvSize] = '\0';
-            printf("\n[%s]\n", buffer);
-            resend(buffer, socketFD, group);
-            if(strstr(buffer, "exit()") != NULL) {
-                closesocket(socketFD);
-                for(int i=0; i<group->size; i++) {
-                    if(socketFD == group->members[i]->socketFD)
-                        group->members[i]->socketFD = 0;
-                }
-                if(socketFD == group->client->socketFD)
-                    group->client->socketFD = 0;
-                break;
-            }
-            else if(strstr(buffer, "shutdown()") != NULL) {
-                group->exit = 1;
-                break;
-            }
-        }
-        else {
-            break;
-        }
-    }
-}
-
-
-void recvPrintThread(clientGroup *group) {
-    pthread_t id;
-    pthread_create(&id, NULL, recvPrint, group);
-}
-
+// Sends the recv message to other sockets in the server
+void resend(char* buffer, int sender, server* s); 
 
 
 int main() {
     WSADATA WSAData;
-    SOCKET serverSocketFD;
+    SOCKET serverSocket;
     SOCKADDR_IN serverAddress;
 
     WSAStartup(MAKEWORD(2,0), &WSAData);
 
-    serverSocketFD = socket(AF_INET, SOCK_STREAM, 0);
-    if(serverSocketFD == INVALID_SOCKET) {
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if(serverSocket == INVALID_SOCKET) {
         printf("[socket() failed]\n\n");
         WSACleanup();
         system("pause");
@@ -125,11 +47,11 @@ int main() {
     }
     printf("[socket() resolved successfully]\n");
 
-    serverAddress = newAddress("", 3000);
+    serverAddress = newAddress("127.0.0.1", 3000);
 
-    if(bind(serverSocketFD, (SOCKADDR*)&serverAddress, sizeof(serverAddress)) != 0) {
+    if(bind(serverSocket, (SOCKADDR*)&serverAddress, sizeof(serverAddress)) != 0) {
         printf("[bind() failed]\n\n");
-        closesocket(serverSocketFD);
+        closesocket(serverSocket);
         WSACleanup();
         system("pause");
         exit(1);
@@ -137,19 +59,19 @@ int main() {
     printf("[bind() resolved successfully]\n");
 
 
-    if(listen(serverSocketFD, SERVER_BACKLOG) != 0){
+    if(listen(serverSocket, BACKLOG) != 0){
         printf("[listen() failed]\n\n");
-        closesocket(serverSocketFD);
+        closesocket(serverSocket);
         WSACleanup();
         system("pause");
         exit(1);
     }
     printf("[listen() resolved successfully]\n");
 
-    acceptLoop(serverSocketFD);
+    acceptLoop(serverSocket);
 
-    shutdown(serverSocketFD, SD_BOTH);
-    closesocket(serverSocketFD);
+    shutdown(serverSocket, SD_BOTH);
+    closesocket(serverSocket);
     WSACleanup();
     printf("\n\n");
     system("pause");
@@ -164,22 +86,107 @@ SOCKADDR_IN newAddress(char* ip, int port) {
     return addr;
 }
 
-void acceptLoop(SOCKET serverSocketFD) {
-    clientGroup group;
-    group.size = 0;
-    group.exit = 0;
-    while(1){
-        if(group.exit == 1)
-            break;
-        if(group.size < SERVER_BACKLOG){
-            group.members[group.size] = clientAccept(serverSocketFD);
+server newServer(SOCKET serverSocket, int size) {
+    server s;
+    s.serverSocket = serverSocket;
+    s.lock = PTHREAD_MUTEX_INITIALIZER;
+    s.prev = -1;
+    s.exit = 0;
+    s.client = -1;
+    for (int i=0; i<size; i++) {
+        s.sockets[i] = 0;
+    }
+    return s;
+}
 
-            group.client = group.members[group.size];
-            if(group.client != NULL && group.client->socketFD != INVALID_SOCKET) {
-                group.size++;
+int notFull(SOCKET* list, int size) {
+    for(int i=0; i<size; i++) {
+        if(list[i] == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void acceptLoop(SOCKET serverSocket) {
+    server s = newServer(serverSocket, BACKLOG);
+    while(1) {
+        if(s.exit == 1) {
+            for (int i=0; i<BACKLOG; i++) {
+                if(s.sockets[i] > 0) {
+                    closesocket(s.sockets[i]);
+                }
+            }
+            break;
+        }
+        s.client = notFull(s.sockets, BACKLOG);
+        if(s.client > -1) {
+            s.sockets[s.client] = accept(s.serverSocket, NULL, NULL);
+            if(s.sockets[s.client] != INVALID_SOCKET) {
+                pthread_mutex_lock(&s.lock);
+                s.prev = s.client;
+                pthread_mutex_unlock(&s.lock);
+                pthread_create(&s.th[s.prev], NULL, recvLoop, &s);
                 printf("\n[accept() resolved successfully]\n");
-                recvPrintThread(&group);
             }
         }
     }
 }
+
+void* recvLoop(void* pServer) {
+    server* s = (server*)pServer;
+    pthread_mutex_lock(&s->lock);
+    int cur = s->prev;
+    pthread_mutex_unlock(&s->lock);
+    SOCKET client_socket = s->sockets[cur];
+    char buffer[BUFSIZE];
+    int recvSize;
+
+    while(1) {
+        recvSize = recv(client_socket, buffer, BUFSIZE, 0);
+        if(recvSize > 0) {
+            buffer[recvSize] = '\0';
+            printf("\n[%s]\n", buffer);
+            resend(buffer, cur, s);
+            if(strstr(buffer, "exit()") != NULL) {
+                printf("[recv() exit at socket[%d]]\n\n", client_socket);
+                closesocket(client_socket);
+                s->sockets[cur] = 0;
+                break;
+            }
+            else if(strstr(buffer, "shutdown()") != NULL) {
+                s->exit = 1;
+                printf("[recv() shutdown at socket[%d]]\n\n", client_socket);
+                for (int i=0; i<BACKLOG; i++) {
+                    if(s->sockets[i] > 0) {
+                        closesocket(s->sockets[i]);
+                    }
+                }
+                shutdown(s->serverSocket, SD_BOTH);
+                closesocket(s->serverSocket);
+                WSACleanup();
+                exit(0);
+            }
+        } else {
+            printf("[recv() at socket[%d] failed]\n\n", client_socket);
+            closesocket(client_socket);
+            s->sockets[cur] = 0;
+            break;
+        }
+    }
+}
+
+void resend(char* buffer, int sender, server* s) {
+    for(int i=0; i < BACKLOG; i++) {
+        if(i != sender && s->sockets[i] > 0) {
+            if(send(s->sockets[i], buffer, BUFSIZE, 0) == SOCKET_ERROR) {
+                printf("Resent to member[%d] socket[%d] failed\n", i, s->sockets[i]);
+                closesocket(s->sockets[i]);
+                s->sockets[i] = 0;
+            } else {
+                printf("Resent to member[%d] socket[%d] successfully\n", i, s->sockets[i]);
+            }
+        }
+    }
+}
+
